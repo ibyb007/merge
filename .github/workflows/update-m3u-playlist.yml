@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Install dependencies
+        run: pip install requests
+
       - name: Configure Git
         run: |
           git config --local user.email "action@github.com"
@@ -32,13 +35,9 @@ jobs:
           SOURCE4: ${{ secrets.SOURCE4 }}
         run: python merge_m3u.py
 
-      - name: Upload to secret Gist (create or update)
-        env:
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+      - name: Create upload script
         run: |
-          python -c "
-          import textwrap
-          exec(textwrap.dedent('''
+          cat > upload_gist.py << 'EOF'
           import os
           import requests
           import subprocess
@@ -50,6 +49,8 @@ jobs:
           if os.path.exists(gist_id_file):
               with open(gist_id_file, 'r') as f:
                   gist_id = f.read().strip()
+
+          was_update = bool(gist_id)
 
           with open('merged.m3u', 'r', encoding='utf-8') as f:
               content = f.read()
@@ -88,12 +89,17 @@ jobs:
                   exit(1)
 
           if response.status_code in [200, 201]:
-              print(f'Gist {'updated' if gist_id else 'created'} successfully. ID: {gist_id}')
+              print(f'Gist {"updated" if was_update else "created"} successfully. ID: {gist_id}')
           else:
               print(f'Error updating gist: {response.status_code} - {response.text}')
               exit(1)
-          '''))
-          "
+          EOF
 
-      - name: Clean up temp file
-        run: rm -f merged.m3u
+      - name: Upload to secret Gist (create or update)
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: python upload_gist.py
+
+      - name: Clean up temp files
+        run: |
+          rm -f merged.m3u upload_gist.py
