@@ -3,6 +3,8 @@
 https://in-mc-fdlive.fancode.com/mumbai/138150_english_hls_8cebbcf49114628_1ta-di_h264/index.m3u8|User-Agent=ReactNativeVideo/8.0.0 (Linux;Android/13) AndroidXMedia3/1.1.1&referer=https://fancode.com/
 #EXTINF:-1 tvg-id="138101" tvg-name="United Arab Emirates Vs Iraq" tvg-logo="https://www.fancode.com/skillup-uploads/cms-media/UAE-vs-Iraq_Old-match-card.jpg" tvg-language="ENGLISH" group-title="Football",ENG | United Arab Emirates Vs Iraq
 https://in-mc-fdlive.fancode.com/mumbai/138101_english_hls_69ca569da920348_1ta-di_h264/index.m3u8|User-Agent=ReactNativeVideo/8.0.0 (Linux;Android/13) AndroidXMedia3/1.1.1&referer=https://fancode.com/
+#EXTINF:-1 tvg-id="137977" tvg-name="Day 1" tvg-logo="https://www.fancode.com/skillup-uploads/cms-media/Butterfield-Bermuda-Championship_2025_match-card_OLd_match-card.jpg" tvg-language="ENGLISH" group-title="Golf",ENG | Day 1
+https://in-mc-fdlive.fancode.com/mumbai/137977_english_hls_954705607383558_1ta-di_h264/index.m3u8|User-Agent=ReactNativeVideo/8.0.0 (Linux;Android/13) AndroidXMedia3/1.1.1&referer=https://fancode.com/
 #EXTINF:-1 tvg-id="1373" group-title="Jiostar" tvg-logo="https://jiotvimages.cdn.jio.com/dare_images/images/Disney_Channel.png",Disney Channel
 #KODIPROP:inputstream.adaptive.license_type=clearkey
 #KODIPROP:inputstream.adaptive.license_key=5181d3e6698055578cedc5bfc86b3e56:3dca7917d8cf9bb7095dc72b48bdcd3c
