@@ -2,7 +2,7 @@ name: Update M3U Playlist Hourly
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Run every hour at minute 0
+    - cron: '5 * * * *'  # Run every hour at minute 5
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -37,59 +37,62 @@ jobs:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
           python -c "
-import os
-import requests
-import subprocess
-import json
-from datetime import datetime
+          import textwrap
+          exec(textwrap.dedent('''
+          import os
+          import requests
+          import subprocess
+          import json
+          from datetime import datetime
 
-gist_id_file = '.gist-id'
-gist_id = None
-if os.path.exists(gist_id_file):
-    with open(gist_id_file, 'r') as f:
-        gist_id = f.read().strip()
+          gist_id_file = '.gist-id'
+          gist_id = None
+          if os.path.exists(gist_id_file):
+              with open(gist_id_file, 'r') as f:
+                  gist_id = f.read().strip()
 
-with open('merged.m3u', 'r', encoding='utf-8') as f:
-    content = f.read()
+          with open('merged.m3u', 'r', encoding='utf-8') as f:
+              content = f.read()
 
-data = {
-    'description': f'Updated M3U Playlist - {datetime.now().strftime(\"%Y-%m-%d %H:%M UTC\")}',
-    'public': False,
-    'files': {
-        'merged.m3u': {'content': content}
-    }
-}
+          data = {
+              'description': f'Updated M3U Playlist - {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}',
+              'public': False,
+              'files': {
+                  'merged.m3u': {'content': content}
+              }
+          }
 
-headers = {
-    'Authorization': f'token {os.environ[\"GIST_TOKEN\"]}',
-    'Content-Type': 'application/json'
-}
+          headers = {
+              'Authorization': f'token {os.environ["GIST_TOKEN"]}',
+              'Content-Type': 'application/json'
+          }
 
-url = 'https://api.github.com/gists'
-if gist_id:
-    url += f'/{gist_id}'
-    response = requests.patch(url, headers=headers, json=data)
-else:
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 201:
-        gist_id = response.json()['id']
-        with open(gist_id_file, 'w') as f:
-            f.write(gist_id)
-        # Commit new gist ID
-        subprocess.run(['git', 'add', gist_id_file], check=True)
-        result = subprocess.run(['git', 'diff', '--staged', '--quiet'])
-        if result.returncode != 0:
-            subprocess.run(['git', 'commit', '-m', f'Add gist ID: {gist_id}'], check=True)
-            subprocess.run(['git', 'push'], check=True)
-    else:
-        print(f'Error creating gist: {response.status_code} - {response.text}')
-        exit(1)
+          url = 'https://api.github.com/gists'
+          if gist_id:
+              url += f'/{gist_id}'
+              response = requests.patch(url, headers=headers, json=data)
+          else:
+              response = requests.post(url, headers=headers, json=data)
+              if response.status_code == 201:
+                  gist_id = response.json()['id']
+                  with open(gist_id_file, 'w') as f:
+                      f.write(gist_id)
+                  # Commit new gist ID
+                  subprocess.run(['git', 'add', gist_id_file], check=True)
+                  result = subprocess.run(['git', 'diff', '--staged', '--quiet'])
+                  if result.returncode != 0:
+                      subprocess.run(['git', 'commit', '-m', f'Add gist ID: {gist_id}'], check=True)
+                      subprocess.run(['git', 'push'], check=True)
+              else:
+                  print(f'Error creating gist: {response.status_code} - {response.text}')
+                  exit(1)
 
-if response.status_code in [200, 201]:
-    print(f'Gist {'updated' if gist_id else 'created'} successfully. ID: {gist_id}')
-else:
-    print(f'Error updating gist: {response.status_code} - {response.text}')
-    exit(1)
+          if response.status_code in [200, 201]:
+              print(f'Gist {'updated' if gist_id else 'created'} successfully. ID: {gist_id}')
+          else:
+              print(f'Error updating gist: {response.status_code} - {response.text}')
+              exit(1)
+          '''))
           "
 
       - name: Clean up temp file
