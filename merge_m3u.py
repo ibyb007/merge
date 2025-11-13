@@ -3,25 +3,26 @@
 Updated M3U Playlist Merger for IPTV (Full Block Preservation + EPG + Exclusions)
 ===============================================================================
 
-Fetches three M3U playlists, parses full entry blocks (#EXTINF + all #props like KODIPROP/DRM + URL),
+Fetches four M3U playlists via env vars, parses full entry blocks (#EXTINF + all #props like KODIPROP/DRM + URL),
 excludes Devotional/Music/Educational groups and channels containing specified languages in titles,
 merges unique by URL (first occurrence wins, preserves all metadata),
-with fancode.m3u on top. Adds global EPG to header.
+with ibybtv.m3u on top. Adds global EPG to header.
 
 Usage: python merge_m3u.py
-Output: merged.m3u
+Output: merged.m3u (temp file)
 """
 
 import urllib.request
 import re  # For case-insensitive group matching and title extraction
+import os
 from collections import OrderedDict
 
-# Sources: fancode FIRST for top priority in merge order
-SOURCES = [
-    "https://raw.githubusercontent.com/Jitendra-unatti/fancode/refs/heads/main/data/fancode.m3u",
-    "https://raw.githubusercontent.com/alex8875/m3u/refs/heads/main/jtv.m3u",
-    "https://raw.githubusercontent.com/alex8875/m3u/refs/heads/main/z5.m3u"
-]
+# Sources: Read from env vars for privacy
+SOURCE1 = os.getenv('SOURCE1')
+SOURCE2 = os.getenv('SOURCE2')
+SOURCE3 = os.getenv('SOURCE3')
+SOURCE4 = os.getenv('SOURCE4')
+SOURCES = [SOURCE1, SOURCE2, SOURCE3, SOURCE4]
 
 # Excluded groups (case-insensitive)
 EXCLUDED_GROUPS = ["devotional", "music", "educational"]
@@ -137,7 +138,7 @@ def parse_m3u(content):
     return entries
 
 def merge_m3us(source_entries):
-    """Merge full blocks from sources in order (fancode first), unique by URL."""
+    """Merge full blocks from sources in order (ibybtv first), unique by URL."""
     merged = OrderedDict()
     total_added = 0
     for source_name, entries in source_entries.items():
@@ -166,6 +167,9 @@ def main():
     source_entries = {}
     print("Fetching sources...\n")
     for i, url in enumerate(SOURCES, 1):
+        if not url:
+            print(f"Source {i} URL not set in env var. Skipping.")
+            continue
         source_name = f"Source {i} ({url.split('/')[-1].split('.')[0] if '.' in url else 'Unknown'})"
         print(f"Fetching {source_name}...")
         content = fetch_m3u(url)
@@ -180,7 +184,7 @@ def main():
         print("No sources loaded. Exiting.")
         return
     
-    print("\nMerging (fancode on top, excluding groups and languages)...")
+    print("\nMerging (ibybtv on top, excluding groups and languages)...")
     merged_entries = merge_m3us(source_entries)
     save_merged(merged_entries)
     print("Done! All metadata preserved, groups/languages excluded, EPG added. Check merged.m3u. 🎵")
