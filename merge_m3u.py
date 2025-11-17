@@ -7,6 +7,7 @@ Fetches four M3U playlists via env vars, parses full entry blocks (#EXTINF + all
 excludes Devotional/Music/Educational groups and channels containing specified languages in titles,
 merges unique by URL (first occurrence wins, preserves all metadata),
 with ibybtv.m3u on top. Adds global EPG to header.
+Special handling for SOURCE4: only include 'movies' and 'bengali' groups.
 
 Usage: python merge_m3u.py
 Output: merged.m3u (temp file)
@@ -62,10 +63,10 @@ def is_excluded_language(title):
             return True
     return False
 
-def parse_m3u(content):
+def parse_m3u(content, is_special=False):
     """Parse M3U into dict of URL: list of exact lines for the entry block (#EXTINF + all #props).
-    Skips excluded groups and language-based exclusions; preserves everything verbatim;
-    handles plain URLs as fallback.
+    Skips excluded groups and language-based exclusions; for special source, only allows 'movies'/'bengali' groups;
+    preserves everything verbatim; handles plain URLs as fallback.
     """
     if not content:
         return {}
@@ -78,16 +79,28 @@ def parse_m3u(content):
         line = lines[i]
         if line.startswith('#EXTINF:'):
             extinf = line
+            group = get_group_title(extinf)
             
-            if is_excluded_group(extinf):
-                group_excluded_count += 1
-                # Skip the whole block
-                i += 1
-                while i < len(lines) and (lines[i].startswith('#') or not lines[i].strip()):
+            if is_special:
+                if group not in ['movies', 'bengali']:
+                    group_excluded_count += 1
+                    # Skip the whole block
                     i += 1
-                if i < len(lines) and not lines[i].startswith('#'):
-                    i += 1  # Skip URL
-                continue
+                    while i < len(lines) and (lines[i].startswith('#') or not lines[i].strip()):
+                        i += 1
+                    if i < len(lines) and not lines[i].startswith('#'):
+                        i += 1  # Skip URL
+                    continue
+            else:
+                if is_excluded_group(extinf):
+                    group_excluded_count += 1
+                    # Skip the whole block
+                    i += 1
+                    while i < len(lines) and (lines[i].startswith('#') or not lines[i].strip()):
+                        i += 1
+                    if i < len(lines) and not lines[i].startswith('#'):
+                        i += 1  # Skip URL
+                    continue
             
             # Extract title: everything after the last comma
             title_match = re.search(r',(.+)$', extinf)
@@ -173,8 +186,9 @@ def main():
         source_name = f"Source {i} ({url.split('/')[-1].split('.')[0] if '.' in url else 'Unknown'})"
         print(f"Fetching {source_name}...")
         content = fetch_m3u(url)
+        is_special = (i == 4)
         if content:
-            entries = parse_m3u(content)
+            entries = parse_m3u(content, is_special=is_special)
             source_entries[source_name] = entries
             print(f"  Parsed {len(entries)} entries")
         else:
@@ -184,7 +198,7 @@ def main():
         print("No sources loaded. Exiting.")
         return
     
-    print("\nMerging (ibybtv on top, excluding groups and languages)...")
+    print("\nMerging (ibybtv on top, excluding groups and languages; SOURCE4 only movies/bengali)...")
     merged_entries = merge_m3us(source_entries)
     save_merged(merged_entries)
     print("Done! All metadata preserved, groups/languages excluded, EPG added. Check merged.m3u. 🎵")
