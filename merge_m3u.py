@@ -26,10 +26,10 @@ SOURCE4 = os.getenv('SOURCE4')
 SOURCES = [SOURCE1, SOURCE2, SOURCE3, SOURCE4]
 
 # Excluded groups (case-insensitive)
-EXCLUDED_GROUPS = ["devotional", "music", "educational"]
+EXCLUDED_GROUPS = ["devotional", "education", "shopping", "music", "educational"]
 
 # Languages to exclude in channel titles (case-insensitive)
-EXCLUDE_LANGUAGES = ['tamil', 'telugu', 'oriya', 'gujarati', 'kannada', 'malayalam', 'bhojpuri', 'punjabi', 'marathi']
+EXCLUDE_LANGUAGES = ['tamil', 'telugu', 'oriya', 'gujarati', 'gujarat', 'kannada', 'malayalam', 'bhojpuri', 'punjabi', 'marathi']
 
 EPG_URL = "https://raw.githubusercontent.com/ibyb007/myepg/main/epg.xml.gz"
 
