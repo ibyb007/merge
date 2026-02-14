@@ -1,207 +1,194 @@
 #!/usr/bin/env python3
 """
-Updated M3U Playlist Merger for IPTV (Full Block Preservation + EPG + Exclusions)
-===============================================================================
+M3U Playlist Merger - IPTV (Full Block Preservation + EPG + Source-Specific Exclusions)
+===================================================================================
 
-Fetches four M3U playlists via env vars, parses full entry blocks (#EXTINF + all #props like KODIPROP/DRM + URL),
-excludes Devotional/Music/Educational groups and channels containing specified languages in titles,
-merges unique by URL (first occurrence wins, preserves all metadata),
-with ibybtv.m3u on top. Adds global EPG to header.
-Special handling for SOURCE4: only include 'movies' and 'bengali' groups.
+Fetches playlists from env vars: share, jtv, fcode, sliv
+- Global: exclude devotional/music/education/shopping groups for ALL sources
+- JTV only: additionally exclude groups containing regional languages ('tamil', 'telugu', etc.)
+- Other sources: exclude certain languages from channel titles (after comma)
+- sliv (fourth): restrict to only 'movies' + 'bengali' groups
+- Merge unique by URL (first wins), preserve full #EXTINF + props + URL
 
-Usage: python merge_m3u.py
-Output: merged.m3u (temp file)
+Output: merged.m3u with EPG header
 """
 
 import urllib.request
-import re  # For case-insensitive group matching and title extraction
+import re
 import os
 from collections import OrderedDict
 
-# Sources: Read from env vars for privacy
-SOURCE1 = os.getenv('SOURCE1')
-SOURCE2 = os.getenv('SOURCE2')
-SOURCE3 = os.getenv('SOURCE3')
-SOURCE4 = os.getenv('SOURCE4')
-SOURCES = [SOURCE1, SOURCE2, SOURCE3, SOURCE4]
+# ── Sources ────────────────────────────────────────────────────────────────
+share = os.getenv('share')
+jtv   = os.getenv('jtv')
+fcode = os.getenv('fcode')
+sliv  = os.getenv('sliv')
 
-# Excluded groups (case-insensitive)
-EXCLUDED_GROUPS = ["devotional", "education", "shopping", "music", "educational"]
+SOURCES = [share, jtv, fcode, sliv]
+SOURCE_NAMES = ["share", "jtv", "fcode", "sliv"]
 
-# Languages to exclude in channel titles (case-insensitive)
-EXCLUDE_LANGUAGES = ['tamil', 'telugu', 'oriya', 'gujarati', 'gujarat', 'kannada', 'malayalam', 'bhojpuri', 'punjabi', 'marathi']
+# Global excluded groups (applied to EVERY source)
+GLOBAL_EXCLUDED_GROUPS = ["devotional", "education", "shopping", "music", "educational"]
+
+# JTV-specific excluded groups (applied ONLY to jtv source)
+JTV_EXCLUDE_GROUPS = [
+    'tamil', 'telugu', 'odia', 'oriya', 'gujarati', 'kannada', 'malayalam',
+    'bhojpuri', 'punjabi', 'marathi', 'unknown', 'nepali', 'french',
+    'haryanvi', 'urdu'
+]
+
+# Title-based language exclusions (applied to share, fcode, sliv — NOT jtv)
+TITLE_EXCLUDE_LANGUAGES = ['tamil', 'telugu', 'oriya', 'gujarati', 'gujarat', 'kannada', 'malayalam', 'bhojpuri', 'punjabi', 'marathi']
 
 EPG_URL = "https://raw.githubusercontent.com/ibyb007/myepg/main/epg.xml.gz"
 
 def fetch_m3u(url):
-    """Fetch M3U content from URL."""
     try:
-        with urllib.request.urlopen(url) as response:
-            return response.read().decode('utf-8')
+        with urllib.request.urlopen(url) as r:
+            return r.read().decode('utf-8')
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        print(f"Fetch error {url}: {e}")
         return None
 
-def get_group_title(extinf_line):
-    """Extract group-title from #EXTINF line (case-insensitive)."""
-    match = re.search(r'group-title="([^"]*)"', extinf_line, re.IGNORECASE)
-    return match.group(1).lower() if match else ''
+def get_group_title(extinf):
+    m = re.search(r'group-title="([^"]*)"', extinf, re.I)
+    return m.group(1).lower() if m else ''
 
-def is_excluded_group(extinf_line):
-    """Check if #EXTINF line contains excluded group-titles (case-insensitive)."""
-    lower_line = extinf_line.lower()
-    for group in EXCLUDED_GROUPS:
-        if f'group-title="{group}"' in lower_line:
-            return True
-    return False
+def is_global_excluded_group(extinf):
+    lower = extinf.lower()
+    return any(f'group-title="{g}"' in lower for g in GLOBAL_EXCLUDED_GROUPS)
 
-def is_excluded_language(title):
-    """Check if channel title contains excluded languages (case-insensitive)."""
+def is_jtv_excluded_group(group_lower):
+    return any(lang in group_lower for lang in JTV_EXCLUDE_GROUPS)
+
+def is_excluded_language_in_title(title):
     lower_title = title.lower()
-    for lang in EXCLUDE_LANGUAGES:
-        if lang in lower_title:
-            return True
-    return False
+    return any(lang in lower_title for lang in TITLE_EXCLUDE_LANGUAGES)
 
-def parse_m3u(content, is_special=False):
-    """Parse M3U into dict of URL: list of exact lines for the entry block (#EXTINF + all #props).
-    Skips excluded groups and language-based exclusions; for special source, only allows 'movies'/'bengali' groups;
-    preserves everything verbatim; handles plain URLs as fallback.
-    """
+def parse_m3u(content, source_name="", is_special=False):
     if not content:
         return {}
-    lines = content.split('\n')
-    entries = OrderedDict()  # Preserve order within source
+    
+    lines = content.splitlines()
+    entries = OrderedDict()
     i = 0
-    group_excluded_count = 0
-    lang_excluded_count = 0
+    global_group_excl = 0
+    jtv_group_excl = 0
+    title_lang_excl = 0
+    
+    is_jtv = source_name.lower() == "jtv"
+    
     while i < len(lines):
-        line = lines[i]
+        line = lines[i].rstrip()
         if line.startswith('#EXTINF:'):
             extinf = line
-            group = get_group_title(extinf)
+            group_lower = get_group_title(extinf)
             
-            if is_special:
-                if group not in ['movies', 'bengali']:
-                    group_excluded_count += 1
-                    # Skip the whole block
-                    i += 1
-                    while i < len(lines) and (lines[i].startswith('#') or not lines[i].strip()):
-                        i += 1
-                    if i < len(lines) and not lines[i].startswith('#'):
-                        i += 1  # Skip URL
-                    continue
-            else:
-                if is_excluded_group(extinf):
-                    group_excluded_count += 1
-                    # Skip the whole block
-                    i += 1
-                    while i < len(lines) and (lines[i].startswith('#') or not lines[i].strip()):
-                        i += 1
-                    if i < len(lines) and not lines[i].startswith('#'):
-                        i += 1  # Skip URL
-                    continue
-            
-            # Extract title: everything after the last comma
-            title_match = re.search(r',(.+)$', extinf)
-            title = title_match.group(1).strip() if title_match else ''
-            
-            if is_excluded_language(title):
-                lang_excluded_count += 1
-                # Skip the whole block
-                i += 1
-                while i < len(lines) and (lines[i].startswith('#') or not lines[i].strip()):
-                    i += 1
-                if i < len(lines) and not lines[i].startswith('#'):
-                    i += 1  # Skip URL
+            # 1. Global group exclusion (all sources)
+            if is_global_excluded_group(extinf):
+                global_group_excl += 1
+                i = skip_to_next_entry(lines, i)
                 continue
             
-            block = [extinf]  # Start with EXTINF
+            # 2. JTV-specific group exclusion
+            if is_jtv and is_jtv_excluded_group(group_lower):
+                jtv_group_excl += 1
+                i = skip_to_next_entry(lines, i)
+                continue
+            
+            # 3. Special source (sliv) restriction
+            if is_special and group_lower not in ['movies', 'bengali']:
+                global_group_excl += 1  # count as global for consistency
+                i = skip_to_next_entry(lines, i)
+                continue
+            
+            # 4. Title language exclusion (only non-JTV sources)
+            title_match = re.search(r',(.+)$', extinf)
+            title = title_match.group(1).strip() if title_match else ''
+            if not is_jtv and is_excluded_language_in_title(title):
+                title_lang_excl += 1
+                i = skip_to_next_entry(lines, i)
+                continue
+            
+            # Keep this entry
+            block = [extinf]
             i += 1
-            # Collect all consecutive # lines (props like KODIPROP, DRM, etc.)
-            while i < len(lines):
-                next_line = lines[i]
-                if next_line.startswith('#') and not next_line.startswith('#EXTINF:'):
-                    block.append(next_line)
-                    i += 1
-                else:
-                    break
-            # Now at URL (non-# line)
+            while i < len(lines) and lines[i].startswith('#') and not lines[i].startswith('#EXTINF:'):
+                block.append(lines[i].rstrip())
+                i += 1
+            
             if i < len(lines):
-                url = lines[i]
+                url = lines[i].rstrip()
                 if url and not url.startswith('#'):
-                    # Dedupe within source by URL
                     if url not in entries:
                         entries[url] = block
-                        print(f"Parsed full block ({len(block)} props): {title[:30]}... -> {url[:50]}...")
+                        print(f"[{source_name}] + {title[:40]}... ({group_lower}) → {url[:55]}...")
                     i += 1
                     continue
-            # If no URL, skip
             i += 1
-        elif line and not line.startswith('#'):
-            # Fallback: plain URL without block (no group or title to exclude)
+        elif line.strip() and not line.startswith('#'):
+            # Plain URL fallback
             url = line
             if url not in entries:
-                entries[url] = []  # Empty block
-                print(f"Parsed plain URL: {url[:50]}...")
+                entries[url] = []
+                print(f"[{source_name}] plain URL: {url[:55]}...")
             i += 1
         else:
-            i += 1  # Skip headers, comments, empty
-    print(f"  Excluded {group_excluded_count} group-based entries, {lang_excluded_count} language-based entries")
+            i += 1
+    
+    print(f"[{source_name}] Exclusions → global groups: {global_group_excl} | "
+          f"jtv groups: {jtv_group_excl} | title langs: {title_lang_excl}")
     return entries
 
+def skip_to_next_entry(lines, start):
+    i = start + 1
+    while i < len(lines) and lines[i].startswith('#'):
+        i += 1
+    if i < len(lines) and not lines[i].startswith('#'):
+        i += 1  # skip URL
+    return i
+
 def merge_m3us(source_entries):
-    """Merge full blocks from sources in order (ibybtv first), unique by URL."""
     merged = OrderedDict()
-    total_added = 0
-    for source_name, entries in source_entries.items():
-        print(f"\nMerging from {source_name} ({len(entries)} entries)...")
+    for src, entries in source_entries.items():
+        print(f"\n→ Merging {src} ({len(entries)} channels)")
         for url, block in entries.items():
             if url not in merged:
                 merged[url] = block
-                total_added += 1
-                print(f"  Added full block ({len(block)} lines): {url[:30]}...")
-            # Uncomment below for NO deduplication (full concat, even duplicates):
-            # merged[url] = block  # Always add
-    print(f"\nTotal unique entries merged: {len(merged)}")
+    print(f"\nTotal unique: {len(merged)}")
     return merged
 
-def save_merged(merged, output_file='merged.m3u'):
-    """Save merged entries to M3U with EPG-enabled header, writing full blocks verbatim."""
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f'#EXTM3U url-tvg="{EPG_URL}"\n')  # Header with global EPG
-        for url, block in merged.items():
-            for b_line in block:
-                f.write(b_line + '\n')
-            f.write(url + '\n')
-    print(f"Saved {len(merged)} entries (with full props + EPG) to {output_file}")
+def save_merged(merged):
+    with open('merged.m3u', 'w', encoding='utf-8') as f:
+        f.write(f'#EXTM3U url-tvg="{EPG_URL}"\n')
+        for block in merged.values():
+            for ln in block:
+                f.write(ln + '\n')
+            f.write(list(merged.keys())[list(merged.values()).index(block)] + '\n')  # URL
+    print(f"Saved {len(merged)} entries → merged.m3u")
 
 def main():
     source_entries = {}
-    print("Fetching sources...\n")
-    for i, url in enumerate(SOURCES, 1):
+    print("Processing sources...\n")
+    
+    for idx, url in enumerate(SOURCES):
         if not url:
-            print(f"Source {i} URL not set in env var. Skipping.")
+            print(f"{SOURCE_NAMES[idx]} not set → skip")
             continue
-        source_name = f"Source {i} ({url.split('/')[-1].split('.')[0] if '.' in url else 'Unknown'})"
-        print(f"Fetching {source_name}...")
+        name = SOURCE_NAMES[idx]
+        print(f"→ {name}")
         content = fetch_m3u(url)
-        is_special = (i == 4)
+        special = (name == "sliv")
         if content:
-            entries = parse_m3u(content, is_special=is_special)
-            source_entries[source_name] = entries
-            print(f"  Parsed {len(entries)} entries")
-        else:
-            print(f"  Skipped (empty or error)")
+            source_entries[name] = parse_m3u(content, name, special)
     
     if not source_entries:
-        print("No sources loaded. Exiting.")
+        print("Nothing loaded.")
         return
     
-    print("\nMerging (ibybtv on top, excluding groups and languages; SOURCE4 only movies/bengali)...")
-    merged_entries = merge_m3us(source_entries)
-    save_merged(merged_entries)
-    print("Done! All metadata preserved, groups/languages excluded, EPG added. Check merged.m3u. 🎵")
+    merged = merge_m3us(source_entries)
+    save_merged(merged)
+    print("Finished.")
 
 if __name__ == "__main__":
     main()
