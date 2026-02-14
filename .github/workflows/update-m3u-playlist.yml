@@ -2,12 +2,13 @@ name: Update M3U Playlist Hourly
 
 on:
   schedule:
-    - cron: '5 * * * *'  # Run every hour at minute 5
-  workflow_dispatch:  # Allow manual trigger
+    - cron: '5 * * * *'           # every hour at :05
+  workflow_dispatch:              # manual trigger from Actions tab
 
 jobs:
   update:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,39 +20,78 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install dependencies
+      - name: Install dependencies          # ← good to keep, even if not using requests yet
         run: pip install requests
-
-      - name: Configure Git
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
 
       - name: Run M3U merger script
         env:
-          SOURCE1: ${{ secrets.SOURCE1 }}
-          SOURCE2: ${{ secrets.SOURCE2 }}
-          SOURCE3: ${{ secrets.SOURCE3 }}
-          SOURCE4: ${{ secrets.SOURCE4 }}
-        run: python merge_m3u.py
+          share: ${{ secrets.share }}       # ← updated names (must match your script)
+          jtv:   ${{ secrets.jtv }}
+          fcode: ${{ secrets.fcode }}
+          sliv:  ${{ secrets.sliv }}
+        run: python merge_m3u.py | tee merge-output.log     # ← capture all output
 
+      # ────────────────────────────────────────────────────────────────
+      # NEW DEBUG STEP – runs always, even if previous step fails
+      - name: Debug – show files & merger log
+        if: always()
+        run: |
+          echo "──────────────────────────────────────────────"
+          echo "Current directory contents:"
+          ls -la
+          echo ""
+          echo "Merger script output (last 40 lines):"
+          tail -n 40 merge-output.log || echo "(no log file created)"
+          echo ""
+          if [ -f merged.m3u ]; then
+            echo "merged.m3u EXISTS"
+            echo "Line count:"
+            wc -l merged.m3u
+            echo "First 8 lines:"
+            head -n 8 merged.m3u
+          else
+            echo "merged.m3u DOES NOT EXIST – merger failed or produced nothing"
+          fi
+          echo "──────────────────────────────────────────────"
+
+      # ────────────────────────────────────────────────────────────────
       - name: Create upload script
         run: |
           cat > upload_gist.py << 'EOF'
           import os
+          import sys
           import requests
           import json
           from datetime import datetime
 
-          gist_id = os.environ.get('GIST_ID')
+          FILE = 'merged.m3u'
+          GIST_TOKEN = os.environ.get('GIST_TOKEN')
+          GIST_ID = os.environ.get('GIST_ID')
 
-          was_update = bool(gist_id)
+          if not GIST_TOKEN:
+              print("Error: GIST_TOKEN secret is missing")
+              sys.exit(1)
 
-          with open('merged.m3u', 'r', encoding='utf-8') as f:
-              content = f.read()
+          if not os.path.isfile(FILE):
+              print(f"CRITICAL: {FILE} not found → cannot upload.")
+              print("Directory listing:")
+              print(os.listdir('.'))
+              if os.path.exists('merge-output.log'):
+                  print("\nMerger log tail:")
+                  with open('merge-output.log') as f:
+                      lines = f.readlines()
+                      print(''.join(lines[-30:]))
+              sys.exit(1)
+
+          try:
+              with open(FILE, 'r', encoding='utf-8') as f:
+                  content = f.read()
+          except Exception as e:
+              print(f"Error reading {FILE}: {e}")
+              sys.exit(1)
 
           data = {
-              'description': f'Updated M3U Playlist - {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}',
+              'description': f'Merged IPTV Playlist – {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}',
               'public': False,
               'files': {
                   'merged.m3u': {'content': content}
@@ -59,37 +99,37 @@ jobs:
           }
 
           headers = {
-              'Authorization': f'token {os.environ["GIST_TOKEN"]}',
+              'Authorization': f'token {GIST_TOKEN}',
               'Content-Type': 'application/json'
           }
 
           url = 'https://api.github.com/gists'
-          if gist_id:
-              url += f'/{gist_id}'
-              response = requests.patch(url, headers=headers, json=data)
-          else:
-              response = requests.post(url, headers=headers, json=data)
-              if response.status_code == 201:
-                  gist_id = response.json()['id']
-                  print(f'Gist created successfully. ID: {gist_id}')
-                  print('Copy this ID and add it as a new repo secret named "GIST_ID" for future runs.')
-              else:
-                  print(f'Error creating gist: {response.status_code} - {response.text}')
-                  exit(1)
+          method = requests.patch if GIST_ID else requests.post
+          if GIST_ID:
+              url += f'/{GIST_ID}'
 
-          if response.status_code in [200, 201]:
-              print(f'Gist {"updated" if was_update else "created"} successfully. ID: {gist_id}')
+          response = method(url, headers=headers, json=data)
+
+          if response.status_code in (200, 201):
+              gist_id = response.json()['id']
+              action = 'updated' if GIST_ID else 'created'
+              print(f'Gist {action} successfully. ID: {gist_id}')
+              if not GIST_ID:
+                  print("→ Add this as repo secret GIST_ID for future updates:")
+                  print(gist_id)
           else:
-              print(f'Error updating gist: {response.status_code} - {response.text}')
-              exit(1)
+              print(f'Gist error: {response.status_code} – {response.text}')
+              sys.exit(1)
           EOF
 
-      - name: Upload to secret Gist (create or update)
+      - name: Upload to secret Gist
+        if: success()                           # only run if previous steps ok
         env:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
-          GIST_ID: ${{ secrets.GIST_ID }}
+          GIST_ID:    ${{ secrets.GIST_ID }}
         run: python upload_gist.py
 
       - name: Clean up temp files
+        if: always()
         run: |
-          rm -f merged.m3u upload_gist.py
+          rm -f merged.m3u upload_gist.py merge-output.log
